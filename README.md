@@ -109,3 +109,88 @@ openssl x509 -req -in server.csr -CA rootCA.crt -CAkey rootCA.key -CAcreateseria
 ```
 
 Otteniamo `server.crt` pronto per essere installato sul server.
+
+---
+
+### Step 3
+
+1. Comprendere in profondità il manifest che descrive una ResourceQuota
+2. Applicare Quotas e verificarne l'effettivo funzionamento al superamento delle soglie indicate
+
+#### ResourceQuota
+
+Le `ResourceQuota` sono risorse di Kubernetes/OpenShift definite a livello di Namespace per limitare il consumo complessivo di risorse da parte di tutti i pod e gli oggetti presenti in quel determinato `namespace`.
+
+In particolare stabiliscono il `soffitto massimo` per l'intero Namespace.
+
+Le ResourceQuota non limitano solo la `memoria` e la `CPU`, ma possono controllare tre categorie principali:
+- `Risorse Computazionali`: requests.cpu, limits.cpu, requests.memory, limits.memory.
+- `Numero di Oggetti (Count Quotas)`: pods, services, configmaps, secrets, persistentvolumeclaims.
+- `Storage`: requests.storage (spazio totale su disco che il namespace può richiedere).
+
+##### Come funzionano le ResourceQuota nel cluster
+
+- `Admission Control`: A ogni richiesta di creazione di un nuovo Pod, il cluster calcola la somma tra le risorse già occupate nel namespace e quelle richieste dal nuovo Pod (requests / limits).
+- `Enforcement (Blocco immediato)`: Se la somma supera la soglia definita nella quota, l'`Admission Controller` rifiuta la richiesta restituendo un errore `HTTP 403 (Forbidden)`.
+- `Obbligatorietà dei Limiti`: L'attivazione di una ResourceQuota su CPU o RAM impone che ogni Pod nel namespace specifichi esplicitamente le sezioni requests e limits nel proprio manifest YAML; in caso contrario, il deployment viene bloccato a prescindere.
+
+##### quota.yaml
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: quota-mem-cpu-track4
+  namespace: ns-track4
+spec:
+  hard:
+    requests.cpu: "1"      
+    requests.memory: "256Mi" 
+    limits.cpu: "2"          
+    limits.memory: "512Mi"  
+    pods: "3" 
+```
+
+Per testare il funzionano possiamo fare:
+
+1. Creo e applico la ResourceQuota
+  
+```bash
+kubectl apply -f quota.yaml
+```
+
+2. Verifico lo stato iniziale della Quota
+
+```bash
+kubectl get resourcequota quota-mem-cpu-track4 -n ns-track4
+```
+
+3. Creo un primo Deployment valido
+
+```bash
+kubectl apply -f deployment-nginx.yaml
+```
+
+Posso verficare se il pod si avvia correttamente. Se ri-eseguo `kubectl get resourcequota`, posso vedere che la voce `USED` si è aggiornata (requests.memory: 32Mi/256Mi).
+
+4. Forzo il fallimento della Quota
+
+Provo a scalare il deployment a 10 repliche per superare la quota impostata (pods: "3" o requests.memory: 256Mi):
+
+```bash
+kubectl scale deployment deployment-nginx --replicas=10 -n ns-track4
+```
+
+Poi analizzare cosa è successo guardando gli eventi del sistema:
+
+```bash
+kubectl get events -n ns-track4 --field-selector reason=FailedCreate
+```
+
+Quello che osservo è un messaggio di errore generato dal `ReplicaSet` simile a questo:
+
+```bash
+Error creating: pods "deployment-nginx-..." is forbidden: exceeded quota: quota-mem-cpu-track4, requested: requests.memory=32Mi, used: 256Mi, limited: 256Mi
+```
+
+Il cluster ha bloccato la creazione dei pod in eccesso, lasciando attivi solo quelli che rientravano nel budget.

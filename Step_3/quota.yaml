@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: quota-mem-cpu-track4
+  namespace: ns-track4
+spec:
+  hard:
+    requests.cpu: "1"        # Somma totale delle CPU garantite ai Pod <= 1 Core (1000m)
+    requests.memory: "256Mi" # Somma totale della RAM garantita ai Pod <= 256 MiB
+    limits.cpu: "2"          # Somma totale dei limiti di CPU <= 2 Core
+    limits.memory: "512Mi"   # Somma totale dei limiti di RAM <= 512 MiB
+    pods: "3"                # Numero massimo di Pod contemporaneamente attivi <= 3
