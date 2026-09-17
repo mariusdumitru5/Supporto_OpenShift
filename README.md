@@ -1,6 +1,6 @@
 <h1 align="center"> Supporto OpenShift </h1>
 
-Questa repo contiene i vari esercizi e task assegnate nella track 4.
+Questa repo contiene i vari esercizi e task assegnati nella track 4.
 
 ### Step 1
 
@@ -194,3 +194,96 @@ Error creating: pods "deployment-nginx-..." is forbidden: exceeded quota: quota-
 ```
 
 Il cluster ha bloccato la creazione dei pod in eccesso, lasciando attivi solo quelli che rientravano nel budget.
+
+---
+
+### Step 4 
+
+1. Installare Prometheus Stack tramite helm chart ufficiale (https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack)
+2. Comprendere tutti gli elementi dello Stack (Prometheus, AlertManager, Grafana e il NodeExporter)
+3. Provare il BlackBox Exporter per il monitoring di endpoint http
+4. Visionare e comprendere le dashboard installate dall'operator nel punto 1
+
+#### Cos'è Prometheus?
+
+Prometheus è un sistema di `monitoraggio` e `alerting` `time-series` open source, progettato per raccogliere ed elaborare le metriche di applicazioni e infrastrutture cloud-native.
+
+Prometheus organizza il monitoraggio attraverso tre concetti chiave:
+
+* `Target`: È l'entità monitorata. Può essere un sistema operativo (server Linux/Windows), un web server (es. Apache), un database o una singola applicazione/servizio.
+* `Metriche`: Rappresentano i singoli parametri e indicatori raccolti da un Target (es. utilizzo di CPU, RAM e disco, oppure il numero di eccezioni/errori applicativi).
+* `Time-Series Database`: Tutte le `metriche` raccolte dai Target vengono memorizzate nel database interno di Prometheus per l'analisi e lo storico.
+
+#### Architettura e Componenti Principali
+
+
+![Architettura Prometheus](./imgs/pro.png)
+
+Il server Prometheus ha al suo interno tre componenti chiave:
+
+* `Data Retrieval Worker`: Si occupa di raccogliere (*pull*) le metriche esposte dai vari Target e di salvarle direttamente nel database locale.
+* `Time Series Database (TSDB)`: Memorizza le metriche in un formato ottimizzato per le serie temporali (*time series*), organizzando i dati per nome della metrica, timestamp e coppie chiave-valore (etichette).
+* `API Server`: Gestisce le query scritte in `PromQL` (*Prometheus Query Language*) per accedere ai dati memorizzati. Serve l'interfaccia web integrata di Prometheus per la visualizzazione rapida e si integra nativamente con strumenti avanzati di dashboarding come `Grafana`.
+
+
+#### Tipi di Metrica in Prometheus
+
+Ogni metrica include gli attributi `# HELP` (descrizione) e `# TYPE` (tipologia di dato).
+
+| TIPO | COMPORTAMENTO | ESEMPI TIPICI |
+| :--- | :--- | :--- |
+| Counter | Può solo `incrementare` (o resettarsi). | Numero di richieste HTTP, totale eccezioni. |
+| Gauge | Può `salire e scendere`. | Percentuale CPU, consumo RAM, temperatura. |
+| Histogram | Misura la `distribuzione/durata` di un evento in *bucket*. | Latenza delle richieste HTTP, tempo di risposta del DB. |
+
+
+#### Meccanismo di Raccolta (Scraping) metriche
+
+![Meccanismo di raccolta metriche](./imgs/metrics.png)
+
+* **Protocollo:** HTTP / HTTPS
+* **Endpoint standard:** `<target_address>/metrics`
+* **Flusso:** Il *Data Retrieval Worker* esegue una richiesta GET all'endpoint `/metrics` del target, leggendo le metriche nel formato testuale standard.
+* **Compatibilità (Exporter):** Se il sistema da monitorare non supporta nativamente l'endpoint `/metrics`, si affianca al target un **Exporter** (es. *Node Exporter* per i server OS, *MySQL Exporter* per i database) che prende le metriche dal Target, converte le metriche nel formato giusto e poi le espone al *Data Retrieval Worker*. 
+
+###### Node Exporter
+
+Il `Node Exporter` è il componente standard utilizzato per il monitoraggio dell'infrastruttura e dei sistemi operativi (Linux/Unix). 
+
+Ha il compito di raccogliere le metriche a basso livello della macchina su cui è installato e di convertirle nel formato compatibile con Prometheus:
+
+* `Funzionamento:` Gira come servizio in background sul server da monitorare ed espone le metriche sulla porta predefinita `9100` (all'indirizzo `/metrics`).
+* `Metriche monitorate:`
+  * `Risorse di calcolo:` Utilizzo CPU, carico di sistema (*load average*).
+  * `Memoria:` Consumo e disponibilità di RAM e Swap.
+  * `Storage:` Spazio su disco disponibile/usato e prestazioni di I/O (Read/Write).
+  * `Rete:` Traffico in ingresso/uscita e stato delle interfacce.
+
+###### Modello Pull
+
+A differenza di molti sistemi di monitoraggio tradizionali basati su un'architettura `Push`, dove ogni target esegue un agente o un demone che invia continuamente i dati verso il server, generando un traffico di rete costante e imprevedibile, Prometheus adotta un approccio `Pull`.
+
+In questo modello è il server di Prometheus a gestire attivamente la raccolta: a intervalli regolari effettua una richiesta `HTTP` agli endpoint dei vari target per leggere le metriche esposte. Questo approccio non solo riduce lo stress sulla rete, ma rende l'architettura estremamente flessibile. È infatti possibile affiancare più istanze di Prometheus in parallelo che interrogano gli stessi target (garantendo ridondanza) oppure distribuire il carico tra più server per poi federare i dati.
+
+###### Federazione in Prometheus 
+
+La Federazione in Prometheus è un meccanismo che permette a un server Prometheus (detto Prometheus Globale) di recuperare ed estrarre (scraping) metriche selezionate da altri server Prometheus (detti Prometheus Locali).
+
+###### Gestione dei Target Temporanei: Il Pushgateway
+
+Il modello `Pull` di Prometheus presenta un limite con i processi a breve durata (definiti `short-lived jobs` o `ephemeral targets`), come gli script batch o i task automatizzati. Questi processi possono avviarsi, completare il loro lavoro e terminare prima che il server Prometheus abbia il tempo di effettuare lo *scraping* (intervallo di pull).
+
+
+![PushGateway](./imgs/push.png)
+
+Per risolvere questo problema si utilizza il `Pushgateway`:
+
+1. `Push dalle applicazioni:` Durante o alla fine della sua esecuzione, il processore temporaneo invia (*push*) le sue metriche al Pushgateway tramite `API HTTP`.
+2. `Persistence:` Il Pushgateway conserva le metriche ricevute in memoria.
+3. `Pull di Prometheus:` Prometheus effettua il normale *pull* periodico dall'endpoint del Pushgateway come se fosse un comune target, recuperando le metriche dei job ormai terminati.
+
+> ⚠️ **Nota:** Il Pushgateway non deve essere usato come scusa per trasformare Prometheus in un sistema Push globale. Va utilizzato unicamente per job temporanei ed effimeri dove il meccanismo Pull diretto non è fisicamente applicabile.
+
+### Alert Manager
+
+![PushGateway](./imgs/alert.png)

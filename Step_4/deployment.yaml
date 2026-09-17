@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-metrics-app
+  namespace: ns-track4
+  labels:
+    app: python-metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: python-metrics
+  template:
+    metadata:
+      labels:
+        app: python-metrics
+    spec:
+      containers:
+      - name: python-app
+        image: python-metrics:latest
+        imagePullPolicy: IfNotPresent 
+        ports:
+        - containerPort: 8000
+          name: metrics
+        resources: 
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: python-metrics-service
+  namespace: ns-track4
+  labels:
+    app: python-metrics
+spec:
+  ports:
+  - name: metrics
+    port: 8000
+    targetPort: 8000
+  selector:
+    app: python-metrics

@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: python-app-monitor
+  namespace: monitoring 
+  labels:
+    release: prometheus-stack # Deve coincidere col label del helm chart
+spec:
+  selector:
+    matchLabels:
+      app: python-metrics # Intercetta il Service creato prima
+  namespaceSelector:
+    matchNames:
+      - ns-track4
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /
